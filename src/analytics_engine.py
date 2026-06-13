@@ -23,6 +23,84 @@ class AnalyticsEngine:
         df = self.conn.execute(query).df()
         return df.iloc[0].to_dict() if not df.empty else {}
 
+    def get_plant_overview(self):
+        """
+        Return KPI summary for the most recent day in the dataset:
+        latest_date, total_generation_kwh, online_inverters, total_inverters,
+        active_alarm_count, estimated_loss_kwh, and an hourly generation DataFrame.
+        """
+        latest_date = self.conn.execute(
+            "SELECT MAX(DATE(timestamp)) FROM telemetry_minute"
+        ).fetchone()[0]
+
+        day_str = str(latest_date)
+
+        kpi = self.conn.execute(f"""
+            SELECT
+                ROUND(SUM(active_power_kw) / 12.0, 1)   AS total_kwh,
+                COUNT(DISTINCT inverter_id)               AS total_inv
+            FROM telemetry_minute
+            WHERE DATE(timestamp) = '{day_str}'
+        """).fetchone()
+        total_kwh, total_inv = kpi
+
+        online_inv = self.conn.execute(f"""
+            SELECT COUNT(DISTINCT inverter_id)
+            FROM telemetry_minute
+            WHERE DATE(timestamp) = '{day_str}'
+              AND active_power_kw > 0
+        """).fetchone()[0]
+
+        active_alarms = self.conn.execute(f"""
+            SELECT COUNT(*)
+            FROM error_events
+            WHERE start_time <= '{day_str} 23:59:59'
+              AND end_time   >= '{day_str} 00:00:00'
+        """).fetchone()[0]
+
+        # Estimate daily loss: for each active event, compare target vs peer avg
+        est_loss_kwh = self.conn.execute(f"""
+            WITH events_today AS (
+                SELECT event_id, inverter_id, start_time, end_time
+                FROM error_events
+                WHERE start_time <= '{day_str} 23:59:59'
+                  AND end_time   >= '{day_str} 00:00:00'
+            ),
+            peer_avg AS (
+                SELECT timestamp, AVG(active_power_kw) AS baseline
+                FROM telemetry_minute
+                GROUP BY timestamp
+            )
+            SELECT COALESCE(
+                ROUND(SUM(GREATEST(0, p.baseline - t.active_power_kw)) / 12.0, 1),
+                0
+            ) AS loss_kwh
+            FROM events_today e
+            JOIN telemetry_minute t
+                ON t.inverter_id = e.inverter_id
+               AND t.timestamp BETWEEN e.start_time AND e.end_time
+            JOIN peer_avg p ON p.timestamp = t.timestamp
+        """).fetchone()[0]
+
+        hourly_df = self.conn.execute(f"""
+            SELECT DATE_TRUNC('hour', timestamp) AS hour,
+                   ROUND(SUM(active_power_kw) / 12.0, 1) AS kwh
+            FROM telemetry_minute
+            WHERE DATE(timestamp) = '{day_str}'
+            GROUP BY 1
+            ORDER BY 1
+        """).df()
+
+        return {
+            "latest_date":    latest_date,
+            "total_kwh":      total_kwh or 0.0,
+            "total_inv":      total_inv or 0,
+            "online_inv":     online_inv or 0,
+            "active_alarms":  active_alarms or 0,
+            "est_loss_kwh":   est_loss_kwh or 0.0,
+            "hourly_df":      hourly_df,
+        }
+
     def calculate_impact(self, inverter_id, start_time, end_time):
         """
         Calculate energy loss by comparing target inverter against peers.

@@ -21,6 +21,57 @@ engine, agent = setup()
 
 st.title("☀️ Solar O&M Copilot")
 
+# ── Plant Overview KPI Dashboard ────────────────────────────────────────────
+with st.spinner("Loading plant overview..."):
+    ov = engine.get_plant_overview()
+
+st.subheader(f"🏭 Plant Overview — {ov['latest_date']}")
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric(
+    "⚡ Total Generation",
+    f"{ov['total_kwh'] / 1000:.2f} MWh",
+    help="Sum of all inverter output for the latest data day (5-min resolution, ÷12 for kWh)"
+)
+k2.metric(
+    "✅ Online Inverters",
+    f"{ov['online_inv']} / {ov['total_inv']}",
+    delta=f"{ov['total_inv'] - ov['online_inv']} offline" if ov['total_inv'] - ov['online_inv'] else "All online",
+    delta_color="inverse",
+)
+k3.metric(
+    "🚨 Active Alarms",
+    ov["active_alarms"],
+    delta_color="inverse",
+)
+k4.metric(
+    "📉 Est. Energy Loss",
+    f"{ov['est_loss_kwh']:.1f} kWh",
+    help="Estimated loss for fault events active on the latest data day (actual vs peer baseline)"
+)
+
+# Hourly generation bar chart
+hourly = ov["hourly_df"]
+if not hourly.empty:
+    fig_hourly = go.Figure(go.Bar(
+        x=hourly["hour"],
+        y=hourly["kwh"],
+        marker_color="gold",
+        name="Generation (kWh)",
+    ))
+    fig_hourly.update_layout(
+        height=200,
+        margin=dict(l=0, r=0, t=10, b=0),
+        yaxis_title="kWh",
+        xaxis_title=None,
+        showlegend=False,
+        plot_bgcolor="rgba(0,0,0,0)",
+        yaxis=dict(gridcolor="rgba(200,200,200,0.3)"),
+    )
+    st.plotly_chart(fig_hourly, use_container_width=True)
+
+st.markdown("---")
+
 # ── Load all events once ────────────────────────────────────────────────────
 events_df = engine.get_events()
 
