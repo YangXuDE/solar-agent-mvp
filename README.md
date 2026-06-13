@@ -2,6 +2,14 @@
 
 Streamlit-based web application that connects minute-resolution inverter telemetry, error codes, and service tickets to help O&M teams quickly identify inverter failures, calculate production impact, and get actionable advice via a LangGraph-powered agent.
 
+## Screenshots
+
+**Plant Overview & Fault Event Table**
+![Plant Overview dashboard showing KPI metrics and fault event list](docs/screenshot_home.png)
+
+**AI Agent Insights (LangGraph `electrical_fault` path)**
+![Agent Insights section showing incident summary, likely cause, suggested action, and Analysis path: electrical_fault](docs/screenshot_insights.png)
+
 ## Agent Workflow
 
 The agent uses a **LangGraph `StateGraph`** to route each fault event through a dedicated analysis path instead of a single generic LLM call.
