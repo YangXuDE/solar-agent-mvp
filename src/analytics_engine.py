@@ -101,44 +101,87 @@ class AnalyticsEngine:
             "hourly_df":      hourly_df,
         }
 
+    def calculate_clearsky_index(self, start_time, end_time) -> dict:
+        """
+        Mean clear-sky index for the event window (daytime only, altitude > 5°).
+        clearsky_index = irradiance_wm2 / clearsky_ghi_wm2 per 5-min row.
+        1.0 = perfectly clear sky; <0.5 = heavily overcast.
+        """
+        _empty = {"mean_clearsky_index": None, "df": pd.DataFrame()}
+        try:
+            df = self.conn.execute(f"""
+                SELECT
+                    i.timestamp,
+                    i.irradiance_wm2,
+                    c.clearsky_ghi_wm2,
+                    i.irradiance_wm2 / c.clearsky_ghi_wm2 AS clearsky_index
+                FROM irradiance i
+                JOIN clearsky       c ON c.timestamp = i.timestamp
+                JOIN solar_altitude a ON a.timestamp = i.timestamp AND a.altitude > 5
+                WHERE c.clearsky_ghi_wm2 > 10
+                  AND i.timestamp BETWEEN '{start_time}' AND '{end_time}'
+                ORDER BY i.timestamp
+            """).df()
+
+            if df.empty:
+                return _empty
+            return {
+                "mean_clearsky_index": round(float(df["clearsky_index"].mean()), 3),
+                "df": df,
+            }
+        except Exception:
+            return _empty
+
     def calculate_pr(self, inverter_id, start_time, end_time) -> dict:
         """
         IEC 61724-1 Performance Ratio for a given inverter and time window.
 
-        PR = E_ac / (P_nom × H_poa)
-          E_ac       [kWh]    = SUM(active_power_kw) / 12
-          H_poa      [kWh/m²] = SUM(irradiance_wm2)  / 12000
-          P_nom      [kWp]    = installed DC capacity from dim_inverter
+        PR          = E_ac / (P_nom × H_poa)       measured-irradiance based
+        WC_PR       = E_ac / (P_nom × H_clearsky)   NREL weather-corrected
+
+          E_ac        [kWh]    = SUM(active_power_kw) / 12
+          H_poa       [kWh/m²] = SUM(irradiance_wm2)  / 12000
+          H_clearsky  [kWh/m²] = SUM(clearsky_ghi_wm2) / 12000
+          P_nom       [kWp]    = installed DC capacity from dim_inverter
 
         Only daytime rows (solar altitude > 5°) are included.
-        Returns None values if data is missing or H_poa is zero.
+        Returns None values if data is missing or denominators are zero.
         """
-        _none = {"pr": None, "e_ac_kwh": None, "h_poa_kwh_m2": None, "p_nom_kwp": None}
+        _none = {
+            "pr": None, "e_ac_kwh": None,
+            "h_poa_kwh_m2": None, "p_nom_kwp": None,
+            "weather_corrected_pr": None,
+        }
         try:
             row = self.conn.execute(f"""
                 SELECT
-                    SUM(t.active_power_kw) / 12.0   AS e_ac_kwh,
-                    SUM(i.irradiance_wm2)  / 12000.0 AS h_poa_kwh_m2,
-                    MAX(d.installed_kwp)              AS p_nom_kwp
+                    SUM(t.active_power_kw)   / 12.0   AS e_ac_kwh,
+                    SUM(i.irradiance_wm2)    / 12000.0 AS h_poa_kwh_m2,
+                    MAX(d.installed_kwp)                AS p_nom_kwp,
+                    SUM(c.clearsky_ghi_wm2)  / 12000.0 AS h_clearsky_kwh_m2
                 FROM telemetry_minute t
                 JOIN irradiance    i ON i.timestamp = t.timestamp
                 JOIN solar_altitude a ON a.timestamp = t.timestamp AND a.altitude > 5
                 JOIN dim_inverter  d ON d.inverter_id = t.inverter_id
+                LEFT JOIN clearsky c ON c.timestamp = t.timestamp
                 WHERE t.inverter_id = '{inverter_id}'
                   AND t.timestamp BETWEEN '{start_time}' AND '{end_time}'
             """).fetchone()
 
             if not row or row[0] is None or row[2] is None:
                 return _none
-            e_ac, h_poa, p_nom = row
+            e_ac, h_poa, p_nom, h_cs = row
             if not h_poa or h_poa == 0 or not p_nom or p_nom == 0:
                 return _none
 
+            wc_pr = round(e_ac / (p_nom * h_cs), 4) if (h_cs and h_cs > 0) else None
+
             return {
-                "pr":          round(e_ac / (p_nom * h_poa), 4),
-                "e_ac_kwh":    round(e_ac, 3),
-                "h_poa_kwh_m2": round(h_poa, 4),
-                "p_nom_kwp":   round(p_nom, 2),
+                "pr":                  round(e_ac / (p_nom * h_poa), 4),
+                "e_ac_kwh":            round(e_ac, 3),
+                "h_poa_kwh_m2":        round(h_poa, 4),
+                "p_nom_kwp":           round(p_nom, 2),
+                "weather_corrected_pr": wc_pr,
             }
         except Exception:
             return _none

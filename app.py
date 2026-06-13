@@ -157,6 +157,10 @@ with st.spinner("Analyzing data and calculating impact..."):
         event_details["start_time"],
         event_details["end_time"],
     )
+    cs_result = engine.calculate_clearsky_index(
+        event_details["start_time"],
+        event_details["end_time"],
+    )
 
 # ── Summary cards ───────────────────────────────────────────────────────────
 col1, col2, col3, col4, col5 = st.columns(5)
@@ -169,6 +173,72 @@ col5.metric(
     f"{pr_result['pr']:.1%}" if pr_result["pr"] is not None else "N/A",
     help="Normal operating range: 75–85%",
 )
+
+st.markdown("---")
+
+# ── Weather Context ──────────────────────────────────────────────────────────
+st.subheader("☁️ Weather Context")
+
+csi = cs_result["mean_clearsky_index"]
+wc_pr = pr_result["weather_corrected_pr"]
+
+col_a, col_b = st.columns(2)
+col_a.metric(
+    "Clear-Sky Index",
+    f"{csi:.2f}" if csi is not None else "N/A",
+    help="1.0 = perfectly clear sky. Values above 0.7 confirm fault is NOT weather-related.",
+)
+col_b.metric(
+    "Weather-Corrected PR",
+    f"{wc_pr:.1%}" if wc_pr is not None else "N/A",
+    help="PR normalized against clear-sky irradiance (NREL method). More reliable than measured-irradiance PR on cloudy days.",
+)
+
+if csi is not None:
+    if csi >= 0.7:
+        st.success("☀️ Clear sky confirmed during fault window — power loss is attributable to inverter fault, not weather.")
+    elif csi >= 0.4:
+        st.warning("⛅ Partially cloudy during fault window — energy loss estimate may include weather effects.")
+    else:
+        st.info("☁️ Heavily overcast during fault window — difficult to isolate fault impact from weather.")
+
+cs_df = cs_result["df"]
+if not cs_df.empty:
+    fig_cs = go.Figure()
+    fig_cs.add_trace(go.Scatter(
+        x=cs_df["timestamp"],
+        y=cs_df["irradiance_wm2"],
+        mode="lines",
+        name="Measured Irradiance",
+        line=dict(color="steelblue"),
+    ))
+    fig_cs.add_trace(go.Scatter(
+        x=cs_df["timestamp"],
+        y=cs_df["clearsky_ghi_wm2"],
+        mode="lines",
+        name="Clear-Sky GHI (pvlib)",
+        line=dict(color="darkorange", dash="dash"),
+    ))
+
+    cs_data_start = cs_df["timestamp"].min()
+    cs_data_end = cs_df["timestamp"].max()
+    cs_x0 = max(event_details["start_time"], cs_data_start)
+    cs_x1 = min(event_details["end_time"], cs_data_end)
+    if cs_x0 < cs_x1:
+        fig_cs.add_vrect(
+            x0=cs_x0, x1=cs_x1,
+            fillcolor="red", opacity=0.15, layer="below", line_width=0,
+            annotation_text="Error Window", annotation_position="top left",
+        )
+
+    fig_cs.update_layout(
+        title="Irradiance: Measured vs Clear-Sky Baseline",
+        height=300,
+        margin=dict(l=0, r=0, t=40, b=0),
+        yaxis_title="W/m²",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_cs, use_container_width=True)
 
 st.markdown("---")
 

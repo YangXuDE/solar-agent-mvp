@@ -7,11 +7,12 @@ import pandas as pd
 def init_duckdb(db_path="solar_om.duckdb", data_dir="plant_a_data"):
     conn = duckdb.connect(db_path)
 
-    # Skip rebuild if real data is already loaded (telemetry + irradiance both present)
+    # Skip rebuild if real data is already loaded (telemetry + irradiance + clearsky present)
     try:
         sample = conn.execute("SELECT inverter_id FROM telemetry_minute LIMIT 1").fetchone()
         irr_count = conn.execute("SELECT COUNT(*) FROM irradiance").fetchone()[0]
-        if sample and "INV 01." in str(sample[0]) and irr_count > 0:
+        cs_count = conn.execute("SELECT COUNT(*) FROM clearsky").fetchone()[0]
+        if sample and "INV 01." in str(sample[0]) and irr_count > 0 and cs_count > 0:
             return conn
     except Exception:
         pass
@@ -22,10 +23,12 @@ def init_duckdb(db_path="solar_om.duckdb", data_dir="plant_a_data"):
     conn.execute("DROP TABLE IF EXISTS service_tickets")
     conn.execute("DROP TABLE IF EXISTS solar_altitude")
     conn.execute("DROP TABLE IF EXISTS irradiance")
+    conn.execute("DROP TABLE IF EXISTS clearsky")
     conn.execute("DROP TABLE IF EXISTS dim_inverter")
 
     _build_solar_altitude(conn, data_dir)
     _build_irradiance(conn, data_dir)
+    _build_clearsky(conn, data_dir)
     _build_dim_inverter(conn, data_dir)
     _build_telemetry(conn, data_dir)
     _build_error_events(conn, data_dir)
@@ -154,6 +157,40 @@ def _build_irradiance(conn, data_dir):
     )
     conn.execute("CREATE TABLE irradiance AS SELECT * FROM df")
     print(f"  Irradiance: {len(df):,} rows.")
+
+
+def _build_clearsky(conn, data_dir):
+    """Compute pvlib Ineichen clear-sky GHI for every timestamp in irradiance table."""
+    try:
+        import pvlib
+    except ImportError:
+        print("  Warning: pvlib not installed — creating empty clearsky table.")
+        conn.execute("""
+            CREATE TABLE clearsky (timestamp TIMESTAMP, clearsky_ghi_wm2 DOUBLE)
+        """)
+        return
+
+    # Plant location (German utility-scale site, hardcoded)
+    _LAT, _LON, _ALT = 48.5, 11.0, 400
+    location = pvlib.location.Location(
+        latitude=_LAT, longitude=_LON, tz="Europe/Berlin", altitude=_ALT
+    )
+
+    timestamps = conn.execute("SELECT timestamp FROM irradiance ORDER BY timestamp").df()[
+        "timestamp"
+    ]
+    # Timestamps in DB are Europe/Berlin local without tz — re-attach for pvlib
+    times = pd.DatetimeIndex(timestamps).tz_localize("Europe/Berlin")
+
+    clearsky = location.get_clearsky(times)  # columns: ghi, dni, dhi
+
+    df = pd.DataFrame({
+        "timestamp": times.tz_localize(None),   # strip tz before storing
+        "clearsky_ghi_wm2": clearsky["ghi"].values,
+    })
+
+    conn.execute("CREATE TABLE clearsky AS SELECT * FROM df")
+    print(f"  Clear-sky GHI: {len(df):,} rows.")
 
 
 def _build_dim_inverter(conn, data_dir):
