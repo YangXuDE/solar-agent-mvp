@@ -306,9 +306,15 @@ else:
 st.subheader("🤖 Agent Insights & Recommendations")
 
 with st.spinner("Generating AI insights..."):
-    insights = agent.generate_insights(event_details, loss_kwh)
+    insights = agent.generate_insights(
+        event_details,
+        loss_kwh,
+        pr_result=pr_result,
+        clearsky_result=cs_result,
+    )
 
 st.info(f"**Incident Summary:** {insights.get('incident_summary')}")
 st.warning(f"**Likely Cause:** {insights.get('likely_cause')}")
 st.success(f"**Suggested Action:** {insights.get('suggested_action')}")
 st.caption(f"Agent Confidence: {insights.get('confidence')}")
+st.caption(f"Analysis path: {insights.get('workflow_path')}")
