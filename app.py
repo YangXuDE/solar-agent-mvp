@@ -31,7 +31,7 @@ k1, k2, k3, k4 = st.columns(4)
 k1.metric(
     "⚡ Total Generation",
     f"{ov['total_kwh'] / 1000:.2f} MWh",
-    help="Sum of all inverter output for the latest data day (5-min resolution, ÷12 for kWh)"
+    help="Sum of all inverter output for the latest data day (5-min resolution, ÷12 for kWh)",
 )
 k2.metric(
     "✅ Online Inverters",
@@ -47,10 +47,9 @@ k3.metric(
 k4.metric(
     "📉 Est. Energy Loss",
     f"{ov['est_loss_kwh']:.1f} kWh",
-    help="Estimated loss for fault events active on the latest data day (actual vs peer baseline)"
+    help="Estimated loss for fault events active on the latest data day (actual vs peer baseline)",
 )
 
-# Hourly generation bar chart
 hourly = ov["hourly_df"]
 if not hourly.empty:
     fig_hourly = go.Figure(go.Bar(
@@ -276,9 +275,9 @@ else:
         )
     )
 
-    # Clamp vrect to the plotted data range — the solar_altitude filter can
-    # exclude sunrise/sunset boundary timestamps, making ev_start/ev_end fall
-    # outside the chart's x range and producing empty whitespace on the edges.
+    # Clamp vrect to plotted data range — solar_altitude filter can exclude
+    # sunrise/sunset boundary timestamps, pushing ev_start/ev_end outside
+    # the chart's x range and creating blank whitespace on the edges.
     data_start = ts_df["timestamp"].min()
     data_end = ts_df["timestamp"].max()
     vrect_x0 = max(event_details["start_time"], data_start)
