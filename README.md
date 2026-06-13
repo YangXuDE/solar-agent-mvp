@@ -2,6 +2,8 @@
 
 Streamlit-based web application that connects minute-resolution inverter telemetry, error codes, and service tickets to help O&M teams quickly identify inverter failures, calculate production impact, and get actionable advice via a LangGraph-powered agent.
 
+**GitHub**: [YangXuDE/solar-agent-mvp](https://github.com/YangXuDE/solar-agent-mvp)
+
 ## Demo
 
 [![Watch the demo on Loom](https://cdn.loom.com/sessions/thumbnails/536bcfabc3c44afea030fd54aa8aa416-with-play.gif)](https://www.loom.com/share/536bcfabc3c44afea030fd54aa8aa416)
