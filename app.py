@@ -152,13 +152,23 @@ with st.spinner("Analyzing data and calculating impact..."):
         event_details["start_time"],
         event_details["end_time"],
     )
+    pr_result = engine.calculate_pr(
+        event_details["inverter_id"],
+        event_details["start_time"],
+        event_details["end_time"],
+    )
 
 # ── Summary cards ───────────────────────────────────────────────────────────
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Inverter", event_details["inverter_id"])
 col2.metric("Error Code", event_details["error_code"])
 col3.metric("Est. Energy Loss", f"{loss_kwh:.2f} kWh")
 col4.metric("Linked Ticket", event_details.get("ticket_id") or "—")
+col5.metric(
+    "Perf. Ratio (IEC 61724)",
+    f"{pr_result['pr']:.1%}" if pr_result["pr"] is not None else "N/A",
+    help="Normal operating range: 75–85%",
+)
 
 st.markdown("---")
 

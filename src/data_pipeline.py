@@ -1,15 +1,17 @@
 import duckdb
 import os
+import re
 import pandas as pd
 
 
 def init_duckdb(db_path="solar_om.duckdb", data_dir="plant_a_data"):
     conn = duckdb.connect(db_path)
 
-    # Skip rebuild if real data is already loaded
+    # Skip rebuild if real data is already loaded (telemetry + irradiance both present)
     try:
         sample = conn.execute("SELECT inverter_id FROM telemetry_minute LIMIT 1").fetchone()
-        if sample and "INV 01." in str(sample[0]):
+        irr_count = conn.execute("SELECT COUNT(*) FROM irradiance").fetchone()[0]
+        if sample and "INV 01." in str(sample[0]) and irr_count > 0:
             return conn
     except Exception:
         pass
@@ -19,8 +21,12 @@ def init_duckdb(db_path="solar_om.duckdb", data_dir="plant_a_data"):
     conn.execute("DROP TABLE IF EXISTS error_events")
     conn.execute("DROP TABLE IF EXISTS service_tickets")
     conn.execute("DROP TABLE IF EXISTS solar_altitude")
+    conn.execute("DROP TABLE IF EXISTS irradiance")
+    conn.execute("DROP TABLE IF EXISTS dim_inverter")
 
     _build_solar_altitude(conn, data_dir)
+    _build_irradiance(conn, data_dir)
+    _build_dim_inverter(conn, data_dir)
     _build_telemetry(conn, data_dir)
     _build_error_events(conn, data_dir)
     _build_service_tickets(conn, data_dir)
@@ -109,6 +115,73 @@ def _build_solar_altitude(conn, data_dir):
     )
     conn.execute("CREATE TABLE solar_altitude AS SELECT * FROM df")
     print(f"  Solar altitude: {len(df):,} rows.")
+
+
+def _build_irradiance(conn, data_dir):
+    """Store plant-level irradiance (W/m²) per timestamp for IEC 61724 PR calculation."""
+    irr_col = "Plant / Irradiation_average (W/m²)"
+    washed_path = os.path.join(data_dir, "main_monitoring_data_washed.csv")
+    csv_path = os.path.join(data_dir, "main_monitoring_data.csv")
+    parquet_path = os.path.join(data_dir, "main_monitoring_data.parquet")
+
+    if os.path.exists(washed_path):
+        df = pd.read_csv(
+            washed_path,
+            sep=";",
+            decimal=",",
+            index_col=0,
+            encoding="utf-8-sig",
+            usecols=lambda c: c in ("timestamp", irr_col),
+        )
+    elif os.path.exists(csv_path):
+        df = pd.read_csv(
+            csv_path,
+            sep=";",
+            decimal=",",
+            index_col=0,
+            encoding="utf-8-sig",
+            usecols=lambda c: c in ("timestamp", irr_col),
+        )
+    else:
+        df = pd.read_parquet(parquet_path, columns=[irr_col])
+
+    df = df[[irr_col]].dropna().reset_index()
+    df.columns = ["timestamp", "irradiance_wm2"]
+    df["timestamp"] = (
+        pd.to_datetime(df["timestamp"], format="%Y.%m.%d %H:%M", utc=True)
+        .dt.tz_convert("Europe/Berlin")
+        .dt.tz_localize(None)
+    )
+    conn.execute("CREATE TABLE irradiance AS SELECT * FROM df")
+    print(f"  Irradiance: {len(df):,} rows.")
+
+
+def _build_dim_inverter(conn, data_dir):
+    """Store inverter rated DC capacity from System_Overview.xlsx for PR calculation."""
+    xlsx_path = os.path.join(data_dir, "System_Overview.xlsx")
+    if not os.path.exists(xlsx_path):
+        print("  Warning: System_Overview.xlsx not found — creating empty dim_inverter table.")
+        conn.execute("""
+            CREATE TABLE dim_inverter (inverter_id VARCHAR, installed_kwp DOUBLE)
+        """)
+        return
+
+    df = pd.read_excel(xlsx_path, sheet_name="PV plant info", header=2)
+    df = df[df["WR-Type"] == "Inverter"].copy()
+
+    def _parse_inv_id(desc):
+        groups = re.findall(r"\d+", str(desc))
+        if len(groups) < 3:
+            return None
+        d0, d1, d2 = groups[-3], groups[-2], groups[-1]
+        return f"INV {int(d0):02}.{int(d1):02}.{int(d2):03}"
+
+    df["inverter_id"] = df["Description"].apply(_parse_inv_id)
+    df["installed_kwp"] = pd.to_numeric(df["PDC (kWp)"], errors="coerce")
+    df = df[["inverter_id", "installed_kwp"]].dropna()
+
+    conn.execute("CREATE TABLE dim_inverter AS SELECT * FROM df")
+    print(f"  Dim inverter: {len(df):,} rows, total {df['installed_kwp'].sum():.1f} kWp.")
 
 
 def _build_telemetry(conn, data_dir):
