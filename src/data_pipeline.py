@@ -256,7 +256,11 @@ def _filter_plant_wide_events(conn):
     print("Filtering plant-wide outage and no-data events...")
     before = conn.execute("SELECT COUNT(*) FROM error_events").fetchone()[0]
 
-    # Remove events where peers were also generating nothing (grid/weather outage)
+    # Remove events where peers were also generating nothing (grid/weather outage).
+    # Use unconditional AVG (including zeros) so that events where peers are at 0
+    # for most of the window are correctly identified as plant-wide outages.
+    # The previous conditional AVG(CASE WHEN > 0 ...) would skip zeros, causing
+    # plant-wide shutdowns to pass the filter if even one timestamp had positive power.
     conn.execute("""
         DELETE FROM error_events
         WHERE event_id IN (
@@ -264,14 +268,14 @@ def _filter_plant_wide_events(conn):
             FROM error_events e
             JOIN (
                 SELECT e2.event_id,
-                       AVG(CASE WHEN t.active_power_kw > 0 THEN t.active_power_kw END) AS peer_daytime_avg
+                       AVG(t.active_power_kw) AS peer_avg
                 FROM error_events e2
                 JOIN telemetry_minute t
                     ON t.inverter_id != e2.inverter_id
                     AND t.timestamp BETWEEN e2.start_time AND e2.end_time
                 GROUP BY e2.event_id
             ) p ON e.event_id = p.event_id
-            WHERE p.peer_daytime_avg IS NULL OR p.peer_daytime_avg < 1.0
+            WHERE p.peer_avg IS NULL OR p.peer_avg < 1.0
         )
     """)
 

@@ -114,42 +114,63 @@ st.markdown("---")
 # ── Power chart ─────────────────────────────────────────────────────────────
 st.subheader("📈 Power Output vs Peer Baseline")
 
-fig = go.Figure()
-fig.add_trace(
-    go.Scatter(
-        x=ts_df["timestamp"],
-        y=ts_df["baseline_power"],
-        mode="lines",
-        name="Peer Baseline (Expected)",
-        line=dict(dash="dash", color="gray"),
+if ts_df.empty:
+    st.warning("No daytime power data available for this event period.")
+else:
+    actual_all_zero = (ts_df["actual_power"] == 0).all()
+    if actual_all_zero:
+        st.warning(
+            "⚠️ This inverter reported **0 kW output** throughout the entire chart window "
+            "(including the 30-minute context before/after the event). "
+            "The inverter was likely completely offline — not just during this specific error code window."
+        )
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ts_df["timestamp"],
+            y=ts_df["baseline_power"],
+            mode="lines",
+            name="Peer Baseline (Expected)",
+            line=dict(dash="dash", color="gray"),
+        )
     )
-)
-fig.add_trace(
-    go.Scatter(
-        x=ts_df["timestamp"],
-        y=ts_df["actual_power"],
-        mode="lines",
-        name="Actual Power",
-        line=dict(color="royalblue"),
+    fig.add_trace(
+        go.Scatter(
+            x=ts_df["timestamp"],
+            y=ts_df["actual_power"],
+            mode="lines",
+            name="Actual Power",
+            line=dict(color="royalblue"),
+        )
     )
-)
-fig.add_vrect(
-    x0=event_details["start_time"],
-    x1=event_details["end_time"],
-    fillcolor="red",
-    opacity=0.15,
-    layer="below",
-    line_width=0,
-    annotation_text="Error Window",
-    annotation_position="top left",
-)
-fig.update_layout(
-    height=400,
-    margin=dict(l=0, r=0, t=30, b=0),
-    yaxis_title="Active Power (kW)",
-    legend=dict(orientation="h", yanchor="bottom", y=1.02),
-)
-st.plotly_chart(fig, use_container_width=True)
+
+    # Clamp vrect to the plotted data range — the solar_altitude filter can
+    # exclude sunrise/sunset boundary timestamps, making ev_start/ev_end fall
+    # outside the chart's x range and producing empty whitespace on the edges.
+    data_start = ts_df["timestamp"].min()
+    data_end = ts_df["timestamp"].max()
+    vrect_x0 = max(event_details["start_time"], data_start)
+    vrect_x1 = min(event_details["end_time"], data_end)
+    if vrect_x0 < vrect_x1:
+        fig.add_vrect(
+            x0=vrect_x0,
+            x1=vrect_x1,
+            fillcolor="red",
+            opacity=0.15,
+            layer="below",
+            line_width=0,
+            annotation_text="Error Window",
+            annotation_position="top left",
+        )
+
+    fig.update_layout(
+        height=400,
+        margin=dict(l=0, r=0, t=30, b=0),
+        yaxis_title="Active Power (kW)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 # ── AI insights ─────────────────────────────────────────────────────────────
 st.subheader("🤖 Agent Insights & Recommendations")
