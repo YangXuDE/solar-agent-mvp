@@ -11,3 +11,4 @@ venv/
 .claude/
 plant_a_data/main_monitoring_data.csv
 plant_a_data/main_monitoring_data.parquet
+plant_a_data/main_monitoring_data_washed.csv

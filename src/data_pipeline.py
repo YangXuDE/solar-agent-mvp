@@ -34,10 +34,20 @@ def _load_monitoring_data(data_dir):
     """Load main_monitoring_data — CSV preferred, falls back to parquet.
     Rows where ALL inverter U_DC values are null are dropped immediately.
     """
+    washed_path = os.path.join(data_dir, "main_monitoring_data_washed.csv")
     csv_path = os.path.join(data_dir, "main_monitoring_data.csv")
     parquet_path = os.path.join(data_dir, "main_monitoring_data.parquet")
 
-    if os.path.exists(csv_path):
+    if os.path.exists(washed_path):
+        print("  Source: main_monitoring_data_washed.csv")
+        df = pd.read_csv(
+            washed_path,
+            sep=";",
+            decimal=",",
+            index_col=0,
+            encoding="utf-8-sig",
+        )
+    elif os.path.exists(csv_path):
         print("  Source: main_monitoring_data.csv")
         df = pd.read_csv(
             csv_path,
@@ -65,10 +75,20 @@ def _load_monitoring_data(data_dir):
 def _build_solar_altitude(conn, data_dir):
     """Store Plant / Altitude (°) per timestamp — used to exclude nighttime from charts."""
     alt_col = "Plant / Altitude (°)"
+    washed_path = os.path.join(data_dir, "main_monitoring_data_washed.csv")
     csv_path = os.path.join(data_dir, "main_monitoring_data.csv")
     parquet_path = os.path.join(data_dir, "main_monitoring_data.parquet")
 
-    if os.path.exists(csv_path):
+    if os.path.exists(washed_path):
+        df = pd.read_csv(
+            washed_path,
+            sep=";",
+            decimal=",",
+            index_col=0,
+            encoding="utf-8-sig",
+            usecols=lambda c: c in ("timestamp", alt_col),
+        )
+    elif os.path.exists(csv_path):
         df = pd.read_csv(
             csv_path,
             sep=";",
